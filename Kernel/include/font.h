@@ -4,9 +4,14 @@
 
 #include <stdint.h>
 
+#define FONT_WIDTH 8
+#define FONT_HEIGHT 16
+
+#define DEFAULT_FONT_SIZE 8
+
 // 255 caracteres, cada uno 16 filas de 8 bits.
 // Las entradas no especificadas se inicializan a {0, …, 0}.
-static const uint8_t font8x16[255][16] = {
+static const uint8_t FONT[255][16] = {
     [33] =  {0,0,0,0,0,4,4,4,4,4,0,4,0,0,0,0},      // '!'
     [34] =  {0,0,0,0,0,20,20,0,0,0,0,0,0,0,0,0},     // '"'
     [35] =  {0,0,0,0,0,40,40,124,40,124,40,40,0,0,0,0}, // '#'
