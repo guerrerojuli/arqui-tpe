@@ -1,6 +1,12 @@
+#include <stdint.h>
 #include <videoDriver.h>
 #include <font.h>
 #include <lib.h>
+#include <interrupts.h>
+
+//=============================================================================
+// VBE MODE INFORMATION STRUCTURE
+//=============================================================================
 
 struct vbe_mode_info_structure {
 	uint16_t attributes;		// deprecated, only bit 7 should be of interest to you, and it indicates the mode supports a linear frame buffer.
@@ -44,230 +50,110 @@ typedef struct vbe_mode_info_structure * VBEInfoPtr;
 
 VBEInfoPtr VBE_mode_info = (VBEInfoPtr) 0x0000000000005C00;
 
+//=============================================================================
+// TEXT BUFFER FOR RE-RENDERING
+//=============================================================================
+
 typedef struct {
-	uint32_t hex_color;
-	char c;
-} ScreenChar;
+    char c;
+    uint32_t color;
+} TextChar;
 
-struct ScreenInfo {
-	uint32_t index_x;			// Current cursor X position in text buffer
-	uint32_t index_y;			// Current cursor Y position in text buffer
-	uint32_t font_size;			// Current font size in pixels
-	ScreenChar buffer[SCREEN_TEXT_BUFFER_HEIGHT * SCREEN_TEXT_BUFFER_WIDTH];
-} screen_info = {0, 0, DEFAULT_FONT_SIZE};
-
-// Dirty flag for optimization - tracks if video buffer needs updating
-static int buffer_dirty = 1;
-
-// Video buffer for double buffering
-static uint8_t video_buffer[MAX_VIDEO_BUFFER_WIDTH * MAX_VIDEO_BUFFER_HEIGHT * MAX_VIDEO_BUFFER_BYTES_PER_PIXEL];
-
-//=============================================================================
-// VALIDATION AND BOUNDS CHECKING
-//=============================================================================
-
-/**
- * Validates if pixel coordinates are within screen bounds
- */
-static inline int is_valid_position(uint32_t x, uint32_t y) {
-    return x < VBE_mode_info->width && y < VBE_mode_info->height;
-}
-
-/**
- * Validates if text coordinates are within text buffer bounds
- */
-static inline int is_valid_text_position(uint32_t x, uint32_t y) {
-    return x < get_chars_per_buff_line() && y < SCREEN_TEXT_BUFFER_HEIGHT;
-}
-
-/**
- * Checks if a rectangle fits within screen bounds
- */
-static inline int is_within_bounds(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
-    return x + width <= get_video_buffer_width() && y + height <= get_video_buffer_height();
-}
-
-//=============================================================================
-// DIMENSION HELPER FUNCTIONS
-//=============================================================================
-
-/**
- * Gets the effective video buffer width (limited by hardware)
- */
-static uint32_t get_video_buffer_width() {
-    return (MAX_VIDEO_BUFFER_WIDTH > VBE_mode_info->width) ? VBE_mode_info->width : MAX_VIDEO_BUFFER_WIDTH;
-}
-
-/**
- * Gets the effective video buffer height (limited by hardware)
- */
-static uint32_t get_video_buffer_height() {
-    return (MAX_VIDEO_BUFFER_HEIGHT > VBE_mode_info->height) ? VBE_mode_info->height : MAX_VIDEO_BUFFER_HEIGHT;
-}
-
-/**
- * Gets the bytes per pixel for the video buffer
- */
-static uint32_t get_video_buffer_bytes_per_pixel() {
-    uint32_t bytesPerPixel = VBE_mode_info->bpp / 8;
-    return (MAX_VIDEO_BUFFER_BYTES_PER_PIXEL > bytesPerPixel) ? bytesPerPixel : MAX_VIDEO_BUFFER_BYTES_PER_PIXEL;
-}
-
-/**
- * Calculates font width in pixels based on current font size
- */
-static uint32_t get_font_width() {
-    return screen_info.font_size * CHAR_BIT_WIDTH;
-}
-
-/**
- * Calculates font height in pixels based on current font size
- */
-static uint32_t get_font_height() {
-    return screen_info.font_size * CHAR_BIT_HEIGHT;
-}
-
-/**
- * Calculates how many characters fit in one screen line
- */
-static uint32_t get_chars_per_line() {
-    return get_video_buffer_width() / get_font_width();
-}
-
-/**
- * Gets the effective characters per line limited by buffer width
- */
-static uint32_t get_chars_per_buff_line() {
-    uint32_t charsPerLine = get_chars_per_line();
-    return (charsPerLine <= SCREEN_TEXT_BUFFER_WIDTH) ? charsPerLine : SCREEN_TEXT_BUFFER_WIDTH;
-}
-
-//=============================================================================
-// COLOR HELPER FUNCTIONS
-//=============================================================================
-
-uint32_t rgb_to_hex(uint8_t r, uint8_t g, uint8_t b) {
-    return (r) | (g << 8) | (b << 16);
-}
-
-RGB hex_to_rgb(uint32_t hex_color) {
-    return (RGB){
-        .r = hex_color & 0xFF,
-        .g = (hex_color >> 8) & 0xFF,
-        .b = (hex_color >> 16) & 0xFF
-    };
-}
-
-//=============================================================================
-// FRAME BUFFER MANAGEMENT
-//=============================================================================
-
-void update_frame_buffer() {
-    // Only update if buffer has been modified (dirty flag optimization)
-    if (buffer_dirty) {
-        memcpy((void*)VBE_mode_info->framebuffer, video_buffer, 
-               get_video_buffer_width() * get_video_buffer_height() * get_video_buffer_bytes_per_pixel());
-        buffer_dirty = 0;
-    }
-}
+static TextChar text_buffer[SCREEN_TEXT_BUFFER_HEIGHT][SCREEN_TEXT_BUFFER_WIDTH];
+static uint32_t cursor_x = 0;
+static uint32_t cursor_y = 0;
+static uint32_t font_size = 1;
 
 //=============================================================================
 // BASIC DRAWING FUNCTIONS
 //=============================================================================
 
-void put_pixel(uint32_t hex_color, uint32_t x, uint32_t y) {
-    if (!is_valid_position(x, y)) return;
+/**
+ * Puts a single pixel at the specified coordinates
+ */
+void put_pixel(uint32_t hexColor, uint64_t x, uint64_t y) {
+    if (x >= VBE_mode_info->width || y >= VBE_mode_info->height) return;
+
+    uint64_t offset = (x * (VBE_mode_info->bpp / 8)) + (y * VBE_mode_info->pitch);
+    uint8_t* framebuffer = (uint8_t*)VBE_mode_info->framebuffer;
     
-    uint64_t offset = (x * get_video_buffer_bytes_per_pixel()) + (y * VBE_mode_info->pitch);
-    video_buffer[offset]     = (hex_color) & 0xFF;
-    video_buffer[offset+1]   = (hex_color >> 8) & 0xFF; 
-    video_buffer[offset+2]   = (hex_color >> 16) & 0xFF;
-    
-    buffer_dirty = 1;  // Mark buffer as needing update
+    framebuffer[offset]     = (hexColor) & 0xFF;         // Blue
+    framebuffer[offset+1]   = (hexColor >> 8) & 0xFF;    // Green
+    framebuffer[offset+2]   = (hexColor >> 16) & 0xFF;   // Red
 }
 
-void draw_square(uint32_t hex_color, uint32_t x, uint32_t y, uint32_t size) {
-    if (!is_valid_position(x, y)) return;
-    
-    RGB color = hex_to_rgb(hex_color);
-    uint32_t bytes_per_pixel = get_video_buffer_bytes_per_pixel();
-    
-    // Clip the square to screen boundaries
-    uint32_t max_width = (x + size <= get_video_buffer_width()) ? size : get_video_buffer_width() - x;
-    uint32_t max_height = (y + size <= get_video_buffer_height()) ? size : get_video_buffer_height() - y;
-    
-    // Draw the square row by row for better cache performance
-    for (uint32_t row = 0; row < max_height; row++) {
-        uint64_t row_offset = (y + row) * VBE_mode_info->pitch;
-        for (uint32_t col = 0; col < max_width; col++) {
-            uint64_t offset = (x + col) * bytes_per_pixel + row_offset;
-            video_buffer[offset]     = color.r;
-            video_buffer[offset+1]   = color.g; 
-            video_buffer[offset+2]   = color.b;
+/**
+ * Draws a rectangle with specified color and dimensions
+ */
+void draw_rect(uint32_t hexColor, uint32_t posX, uint32_t posY, uint32_t width, uint32_t height) {
+    for (uint32_t y = posY; y < posY + height && y < VBE_mode_info->height; y++) {
+        for (uint32_t x = posX; x < posX + width && x < VBE_mode_info->width; x++) {
+            put_pixel(hexColor, x, y);
         }
     }
-    
-    buffer_dirty = 1;  // Mark buffer as needing update
+}
+
+/**
+ * Draws a square using the draw_rect function
+ */
+void draw_square(uint32_t hexColor, uint32_t posX, uint32_t posY, uint32_t size) {
+    draw_rect(hexColor, posX, posY, size, size);
+}
+
+/**
+ * Clears the entire screen with the specified color
+ */
+void clear_screen(uint32_t clearColor) {
+    draw_rect(clearColor, 0, 0, VBE_mode_info->width, VBE_mode_info->height);
 }
 
 //=============================================================================
 // TEXT RENDERING FUNCTIONS
 //=============================================================================
 
-void draw_char(char c, uint32_t x, uint32_t y, uint32_t color) {
-    if (!is_valid_position(x, y)) return;
-    
-    // Store the character in the text buffer for font size changes
-    uint32_t buffer_x = x / screen_info.font_size;
-    uint32_t buffer_y = y / screen_info.font_size;
-    
-    if (buffer_x < SCREEN_TEXT_BUFFER_WIDTH && buffer_y < SCREEN_TEXT_BUFFER_HEIGHT) {
-        uint32_t index = buffer_y * SCREEN_TEXT_BUFFER_WIDTH + buffer_x;
-        screen_info.buffer[index].c = c;
-        screen_info.buffer[index].hex_color = color;
-    }
-    
-    // Render the character pixel by pixel using font bitmap
-    for (uint32_t row = 0; row < CHAR_BIT_HEIGHT; row++) {
-        uint8_t font_row = FONT[(unsigned char)c][row];
-        for (uint32_t col = 0; col < CHAR_BIT_WIDTH; col++) {
-            if (font_row & (0x01 << col)) {
-                draw_square(color, x + (col * screen_info.font_size), 
-                           y + (row * screen_info.font_size), screen_info.font_size);
+/**
+ * Gets current font width in pixels
+ */
+uint32_t get_font_width() {
+    return font_size * CHAR_BIT_WIDTH;
+}
+
+/**
+ * Gets current font height in pixels
+ */
+uint32_t get_font_height() {
+    return font_size * CHAR_BIT_HEIGHT;
+}
+
+/**
+ * Gets how many characters fit per line
+ */
+uint32_t get_chars_per_line() {
+    return VBE_mode_info->width / get_font_width();
+}
+
+/**
+ * Draws a single character at the specified position (FIXED - LSB to MSB reading)
+ */
+void draw_char(char c, uint32_t hexColor, uint32_t posX, uint32_t posY) {
+    for (uint32_t y = 0; y < CHAR_BIT_HEIGHT; y++) {
+        for (uint32_t x = 0; x < CHAR_BIT_WIDTH; x++) {
+            // FIXED: Read bit from LSB to MSB (bit 0 is leftmost pixel)
+            uint8_t bit = FONT[(unsigned char)c][y] & (1 << x);
+            if (bit) {
+                draw_square(hexColor, posX + x * font_size, posY + y * font_size, font_size);
             }
         }
     }
 }
 
-void draw_string(const char* str, uint32_t x, uint32_t y, uint32_t color) {
-    if (!is_valid_position(x, y)) return;
-    
-    uint32_t current_x = x;
-    uint32_t current_y = y;
-    
-    // Process each character in the string
-    for (int i = 0; str[i] != '\0'; i++) {
-        switch (str[i]) {
-            case '\n':  // New line
-                current_y += get_font_height();
-                current_x = x;
-                break;
-            case '\t':  // Tab (4 spaces)
-                current_x += get_font_width() * 4;
-                break;
-            case '\r':  // Carriage return
-                current_x = x;
-                break;
-            case '\b':  // Backspace
-                if (current_x > x) {
-                    current_x -= get_font_width();
-                }
-                break;
-            default:    // Regular character
-                draw_char(str[i], current_x, current_y, color);
-                current_x += get_font_width();
-                break;
-        }
+/**
+ * Draws a string of characters at the specified position
+ */
+void draw_string(const char* str, uint32_t len, uint32_t hexColor, uint32_t posX, uint32_t posY) {
+    uint32_t fontWidth = get_font_width();
+    for (uint32_t i = 0; i < len; i++) {
+        draw_char(str[i], hexColor, posX + i * fontWidth, posY);
     }
 }
 
@@ -275,152 +161,141 @@ void draw_string(const char* str, uint32_t x, uint32_t y, uint32_t color) {
 // TEXT BUFFER MANAGEMENT
 //=============================================================================
 
-void scroll_up() {
-    // Move all lines up by one position
-    for (uint32_t i = 0; i < (SCREEN_TEXT_BUFFER_HEIGHT - 1) * SCREEN_TEXT_BUFFER_WIDTH; i++) {
-        screen_info.buffer[i] = screen_info.buffer[i + SCREEN_TEXT_BUFFER_WIDTH];
+/**
+ * Re-renders all text from the buffer to the screen
+ */
+static void render_text_buffer() {
+    clear_screen(0x000000);
+    
+    uint32_t font_width = get_font_width();
+    uint32_t font_height = get_font_height();
+    uint32_t chars_per_line = get_chars_per_line();
+    uint32_t lines_per_screen = VBE_mode_info->height / font_height;
+    
+    // Determine which lines to show (scroll if necessary)
+    uint32_t start_line = 0;
+    if (cursor_y >= lines_per_screen) {
+        start_line = cursor_y - lines_per_screen + 1;
     }
     
-    // Clear the bottom line
-    uint32_t last_line_start = (SCREEN_TEXT_BUFFER_HEIGHT - 1) * SCREEN_TEXT_BUFFER_WIDTH;
-    for (uint32_t i = 0; i < SCREEN_TEXT_BUFFER_WIDTH; i++) {
-        screen_info.buffer[last_line_start + i].c = ' ';
-        screen_info.buffer[last_line_start + i].hex_color = 0x000000;
+    // Render visible text
+    for (uint32_t y = start_line; y < start_line + lines_per_screen && y < SCREEN_TEXT_BUFFER_HEIGHT; y++) {
+        for (uint32_t x = 0; x < chars_per_line && x < SCREEN_TEXT_BUFFER_WIDTH; x++) {
+            if (text_buffer[y][x].c != ' ') {
+                draw_char(text_buffer[y][x].c, text_buffer[y][x].color, 
+                         x * font_width, (y - start_line) * font_height);
+            }
+        }
     }
-    
-    buffer_dirty = 1;
 }
 
-void write_to_video_text_buffer(const char* data, uint32_t data_len, uint32_t hex_color) {
+/**
+ * Scrolls the text buffer up by one line
+ */
+static void scroll_text_buffer() {
+    // Move all lines up
+    for (uint32_t y = 0; y < SCREEN_TEXT_BUFFER_HEIGHT - 1; y++) {
+        for (uint32_t x = 0; x < SCREEN_TEXT_BUFFER_WIDTH; x++) {
+            text_buffer[y][x] = text_buffer[y + 1][x];
+        }
+    }
+    
+    // Clear last line
+    for (uint32_t x = 0; x < SCREEN_TEXT_BUFFER_WIDTH; x++) {
+        text_buffer[SCREEN_TEXT_BUFFER_HEIGHT - 1][x].c = ' ';
+        text_buffer[SCREEN_TEXT_BUFFER_HEIGHT - 1][x].color = 0xFFFFFF;
+    }
+    
+    cursor_y--;
+}
+
+/**
+ * Writes text to screen at current cursor position
+ */
+void write_to_video_text_buffer(const char* data, uint32_t data_len, uint32_t hexColor) {
+    uint32_t chars_per_line = get_chars_per_line();
+    if (chars_per_line > SCREEN_TEXT_BUFFER_WIDTH) {
+        chars_per_line = SCREEN_TEXT_BUFFER_WIDTH;
+    }
+    
     for (uint32_t i = 0; i < data_len; i++) {
         switch (data[i]) {
             case '\n':  // New line
-                screen_info.index_y += 1;
-                if (screen_info.index_y >= SCREEN_TEXT_BUFFER_HEIGHT) {
-                    scroll_up();
-                    screen_info.index_y = SCREEN_TEXT_BUFFER_HEIGHT - 1;
-                }
-                screen_info.index_x = 0;
-                break;
-                
-            case '\t':  // Tab (4 spaces)
-                write_to_video_text_buffer("    ", 4, hex_color);
+                cursor_x = 0;
+                cursor_y++;
                 break;
                 
             case '\r':  // Carriage return
-                screen_info.index_x = 0;
+                cursor_x = 0;
+                break;
+                
+            case '\t':  // Tab (4 spaces)
+                cursor_x = (cursor_x + 4) & ~3;  // Align to next multiple of 4
+                if (cursor_x >= chars_per_line) {
+                    cursor_x = 0;
+                    cursor_y++;
+                }
                 break;
                 
             case '\b':  // Backspace
-                if (screen_info.index_x > 0) {
-                    screen_info.index_x -= 1;
-                    // Clear the character at current position
-                    uint32_t index = screen_info.index_y * SCREEN_TEXT_BUFFER_WIDTH + screen_info.index_x;
-                    screen_info.buffer[index].c = ' ';
-                    screen_info.buffer[index].hex_color = hex_color;
-                } else if (screen_info.index_y > 0) {
-                    // Move to end of previous line
-                    screen_info.index_x = get_chars_per_buff_line() - 1;
-                    screen_info.index_y -= 1;
-                    uint32_t index = screen_info.index_y * SCREEN_TEXT_BUFFER_WIDTH + screen_info.index_x;
-                    screen_info.buffer[index].c = ' ';
-                    screen_info.buffer[index].hex_color = hex_color;
+                if (cursor_x > 0) {
+                    cursor_x--;
+                    text_buffer[cursor_y][cursor_x].c = ' ';
+                    text_buffer[cursor_y][cursor_x].color = hexColor;
+                } else if (cursor_y > 0) {
+                    cursor_y--;
+                    cursor_x = chars_per_line - 1;
+                    text_buffer[cursor_y][cursor_x].c = ' ';
+                    text_buffer[cursor_y][cursor_x].color = hexColor;
                 }
                 break;
                 
             default:    // Regular character
-                // Add character to buffer at current cursor position
-                uint32_t index = screen_info.index_y * SCREEN_TEXT_BUFFER_WIDTH + screen_info.index_x;
-                screen_info.buffer[index].c = data[i];
-                screen_info.buffer[index].hex_color = hex_color;
-                
-                // Advance cursor position
-                screen_info.index_x += 1;
-                if (screen_info.index_x >= get_chars_per_buff_line()) {
-                    screen_info.index_x = 0;
-                    screen_info.index_y += 1;
-                    if (screen_info.index_y >= SCREEN_TEXT_BUFFER_HEIGHT) {
-                        scroll_up();
-                        screen_info.index_y = SCREEN_TEXT_BUFFER_HEIGHT - 1;
-                    }
+                if (cursor_x >= chars_per_line) {
+                    cursor_x = 0;
+                    cursor_y++;
                 }
+                
+                // Check if we need to scroll
+                if (cursor_y >= SCREEN_TEXT_BUFFER_HEIGHT) {
+                    scroll_text_buffer();
+                }
+                
+                // Add character to buffer
+                text_buffer[cursor_y][cursor_x].c = data[i];
+                text_buffer[cursor_y][cursor_x].color = hexColor;
+                cursor_x++;
                 break;
         }
     }
     
-    buffer_dirty = 1;
+    render_text_buffer();
 }
 
-void clear_video_text_buffer(uint32_t background_color) {
-    // Clear all characters in the text buffer
-    for (uint32_t i = 0; i < SCREEN_TEXT_BUFFER_HEIGHT * SCREEN_TEXT_BUFFER_WIDTH; i++) {
-        screen_info.buffer[i].c = ' ';
-        screen_info.buffer[i].hex_color = background_color;
+/**
+ * Clears the text buffer and resets cursor
+ */
+void clear_video_text_buffer() {
+    cursor_x = 0;
+    cursor_y = 0;
+    
+    // Clear text buffer
+    for (uint32_t y = 0; y < SCREEN_TEXT_BUFFER_HEIGHT; y++) {
+        for (uint32_t x = 0; x < SCREEN_TEXT_BUFFER_WIDTH; x++) {
+            text_buffer[y][x].c = ' ';
+            text_buffer[y][x].color = 0xFFFFFF;
+        }
     }
     
-    // Reset cursor to top-left
-    screen_info.index_x = 0;
-    screen_info.index_y = 0;
-    
-    buffer_dirty = 1;
-}
-
-//=============================================================================
-// SCREEN MANAGEMENT FUNCTIONS
-//=============================================================================
-
-void set_font_size(uint32_t size) {
-    if (size < 1) return;  // Validate minimum font size
-    
-    screen_info.font_size = size;
-    
-    // Clear the screen and redraw all text with new size
     clear_screen(0x000000);
-    
-    // Redraw all characters from the text buffer with new font size
-    uint32_t x = 0;
-    uint32_t y = 0;
-    
-    for (uint32_t i = 0; i < SCREEN_TEXT_BUFFER_HEIGHT * SCREEN_TEXT_BUFFER_WIDTH; i++) {
-        ScreenChar sc = screen_info.buffer[i];
-        if (sc.c == '\n') {
-            x = 0;
-            y++;
-            continue;
-        }
-        if (sc.c != '\0' && sc.c != ' ') {  // Skip empty and space characters
-            draw_char(sc.c, x * screen_info.font_size, y * screen_info.font_size, sc.hex_color);
-        }
-        x++;
-        if (x >= get_chars_per_buff_line()) {
-            x = 0;
-            y++;
-        }
-    }
-    
-    update_frame_buffer();
 }
 
-void clear_screen(uint32_t color) {
-    RGB rgb_color = hex_to_rgb(color);
-    
-    // Optimization: use memset for solid colors (when R=G=B)
-    if (rgb_color.r == rgb_color.g && rgb_color.g == rgb_color.b) {
-        memset(video_buffer, rgb_color.r, 
-               get_video_buffer_width() * get_video_buffer_height() * get_video_buffer_bytes_per_pixel());
-    } else {
-        // Use pixel-by-pixel approach for non-uniform colors
-        uint32_t total_size = get_video_buffer_width() * get_video_buffer_height() * get_video_buffer_bytes_per_pixel();
-        for (uint32_t i = 0; i < total_size; i += 3) {
-            video_buffer[i]     = rgb_color.r;
-            video_buffer[i+1]   = rgb_color.g;
-            video_buffer[i+2]   = rgb_color.b;
-        }
+/**
+ * Sets the font size (1-5) and re-renders all text
+ */
+void set_font_size(uint32_t fontSize) {
+    if (fontSize > 0 && fontSize <= 5) {
+        font_size = fontSize;
+        render_text_buffer();  // Re-render with new font size
     }
-    
-    // Clear the text buffer
-    clear_video_text_buffer(color);
-    
-    buffer_dirty = 1;
-    update_frame_buffer();
 }

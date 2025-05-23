@@ -7,8 +7,6 @@
 #define FONT_WIDTH 8
 #define FONT_HEIGHT 16
 
-#define DEFAULT_FONT_SIZE 8
-
 // 255 caracteres, cada uno 16 filas de 8 bits.
 // Las entradas no especificadas se inicializan a {0, …, 0}.
 static const uint8_t FONT[255][16] = {

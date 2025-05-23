@@ -81,10 +81,38 @@ void * initializeKernelBinary()
 	return getStackBase();
 }
 
+void wait() {
+	for (int i = 0; i < 100000000; i++);
+}
+
 int main()
 {	
-	char *long_string = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.";
-	draw_string(long_string, 10, 10, 0xFFFFFF);
+	write_to_video_text_buffer("Hello, World!\n", 14, 0xFFFFFF);
+	wait();
+
+	set_font_size(4);
+	wait();
+
+	clear_video_text_buffer();
+	wait();
+
+	write_to_video_text_buffer("Hello, World!\n", 14, 0xFFFFFF);
+	wait();
+
+	set_font_size(2);
+	wait();
+
+	write_to_video_text_buffer("Amarello\n", 9, 0xFFFFFF);
+	wait();
+
+	char long_text[] = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\n";
+	write_to_video_text_buffer(long_text, sizeof(long_text)-1, 0xFFFFFF);
+
+	for (int i = 0; i < 30; i++) {
+		char text[] = { 'a' + i, '\n', '\0' };
+		write_to_video_text_buffer(text, sizeof(text)-1, 0xFFFFFF);
+		wait();
+	}
 
 	return 0;
 }
