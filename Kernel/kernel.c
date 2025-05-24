@@ -8,11 +8,6 @@
 #include <syscalls.h>
 #include <registers.h>
 
-extern uint64_t intDispatcher(uint64_t int_id, const registers_t *registers);
-
-// Declare the external assembly function
-extern void _sys_write_hello_asm(void);
-
 extern uint8_t text;
 extern uint8_t rodata;
 extern uint8_t data;
@@ -22,8 +17,9 @@ extern uint8_t endOfKernel;
 
 static const uint64_t PageSize = 0x1000;
 
-static void * const sampleCodeModuleAddress = (void*)0xA00000;
-static void * const sampleDataModuleAddress = (void*)0xB00000;
+extern void *USERLAND_CODE_ADDRESS;
+extern void *USERLAND_DATA_ADDRESS;
+extern void start_userland();
 
 typedef int (*EntryPoint)();
 
@@ -45,8 +41,8 @@ void * getStackBase()
 void * initializeKernelBinary()
 {
 	void * moduleAddresses[] = {
-		sampleCodeModuleAddress,
-		sampleDataModuleAddress
+		USERLAND_CODE_ADDRESS,
+		USERLAND_DATA_ADDRESS
 	};
 	loadModules(&endOfKernelBinary, moduleAddresses);
 	clearBSS(&bss, &endOfKernel - &bss);
@@ -56,12 +52,7 @@ void * initializeKernelBinary()
 int main()
 {	
 	load_idt();
-
-		sys_write(2, "Hello", 5);
-    // Call the assembly routine
-    _sys_write_hello_asm();
-
-
+	start_userland();
 	return 0;
 }
 	
