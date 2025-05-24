@@ -4,6 +4,9 @@
 #include <moduleLoader.h>
 #include <naiveConsole.h>
 #include <videoDriver.h>
+#include <idtLoader.h>
+#include <syscalls.h>
+#include <registers.h>
 
 extern uint8_t text;
 extern uint8_t rodata;
@@ -14,8 +17,9 @@ extern uint8_t endOfKernel;
 
 static const uint64_t PageSize = 0x1000;
 
-static void * const sampleCodeModuleAddress = (void*)0x400000;
-static void * const sampleDataModuleAddress = (void*)0x500000;
+extern void *USERLAND_CODE_ADDRESS;
+extern void *USERLAND_DATA_ADDRESS;
+extern void start_userland();
 
 typedef int (*EntryPoint)();
 
@@ -36,53 +40,19 @@ void * getStackBase()
 
 void * initializeKernelBinary()
 {
-	char buffer[10];
-
-	ncPrint("[x64BareBones]");
-	ncNewline();
-
-	ncPrint("CPU Vendor:");
-	ncPrint(cpuVendor(buffer));
-	ncNewline();
-
-	ncPrint("[Loading modules]");
-	ncNewline();
 	void * moduleAddresses[] = {
-		sampleCodeModuleAddress,
-		sampleDataModuleAddress
+		USERLAND_CODE_ADDRESS,
+		USERLAND_DATA_ADDRESS
 	};
-
 	loadModules(&endOfKernelBinary, moduleAddresses);
-	ncPrint("[Done]");
-	ncNewline();
-	ncNewline();
-
-	ncPrint("[Initializing kernel's binary]");
-	ncNewline();
-
 	clearBSS(&bss, &endOfKernel - &bss);
-
-	ncPrint("  text: 0x");
-	ncPrintHex((uint64_t)&text);
-	ncNewline();
-	ncPrint("  rodata: 0x");
-	ncPrintHex((uint64_t)&rodata);
-	ncNewline();
-	ncPrint("  data: 0x");
-	ncPrintHex((uint64_t)&data);
-	ncNewline();
-	ncPrint("  bss: 0x");
-	ncPrintHex((uint64_t)&bss);
-	ncNewline();
-
-	ncPrint("[Done]");
-	ncNewline();
-	ncNewline();
 	return getStackBase();
 }
 
 int main()
 {	
-	printChar('A', 10, 10, 0x000000);
+	load_idt();
+	start_userland();
 	return 0;
 }
+	

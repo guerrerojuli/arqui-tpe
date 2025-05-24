@@ -1,8 +1,8 @@
 include Makefile.inc
 
 KERNEL=kernel.bin
-SOURCES=$(wildcard *.c)
-SOURCES_ASM=$(wildcard asm/*.asm)
+SOURCES=$(shell find . -name "*.c")
+SOURCES_ASM=$(shell find . -name "*.asm" ! -name "loader.asm")
 OBJECTS=$(SOURCES:.c=.o)
 OBJECTS_ASM=$(SOURCES_ASM:.asm=.o)
 LOADERSRC=loader.asm
