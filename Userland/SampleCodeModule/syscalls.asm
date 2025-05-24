@@ -1,6 +1,8 @@
 GLOBAL sys_read
 GLOBAL sys_write
 
+section .text
+
 %macro syscall 1
     push rbp
     mov rbp, rsp

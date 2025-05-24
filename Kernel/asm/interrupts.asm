@@ -20,21 +20,21 @@ EXTERN exceptionDispatcher
 SECTION .text
 
 %macro pushState 0
-	push rax
-	push rbx
-	push rcx
-	push rdx
-	push rbp
-	push rdi
-	push rsi
-	push r8
-	push r9
-	push r10
-	push r11
-	push r12
-	push r13
-	push r14
 	push r15
+	push r14
+	push r13
+	push r12
+	push r11
+	push r10
+	push r9
+	push r8
+	push rsi
+	push rdi
+	push rbp
+	push rdx
+	push rcx
+	push rbx
+	push rax
 %endmacro
 
 %macro popState 0
@@ -86,13 +86,13 @@ SECTION .text
 	iretq
 %endmacro
 
-%macro intHandlerMaster 1
+%macro intHandlerMaster 0
 	pushState
-
-	mov rdi, rsp ; pasaje de parametro
+	mov rdi, rsp
+	sti
 	call intDispatcher
 
-	popState
+	popStateWithoutRax
 	iretq
 %endmacro
 
@@ -147,7 +147,7 @@ _irq01Handler:
 	irqHandlerMaster 1
 
 _int80Handler:
-	intHandlerMaster 0
+	intHandlerMaster
 
 ;Zero Division Exception
 _exception0Handler:
