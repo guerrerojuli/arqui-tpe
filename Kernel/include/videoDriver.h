@@ -3,11 +3,6 @@
 
 #include <stdint.h>
 
-// Buffer dimensions
-#define MAX_VIDEO_BUFFER_WIDTH 800
-#define MAX_VIDEO_BUFFER_HEIGHT 600
-#define MAX_VIDEO_BUFFER_BYTES_PER_PIXEL 3
-
 // Font dimensions
 #define CHAR_BIT_WIDTH 8
 #define CHAR_BIT_HEIGHT 16
@@ -15,14 +10,7 @@
 // Text buffer dimensions for 4px font size
 #define SCREEN_TEXT_BUFFER_WIDTH 200  // 800px width / 4px font size
 #define SCREEN_TEXT_BUFFER_HEIGHT 150 // 600px height / 4px font size
-#define DEFAULT_FONT_SIZE 4
 
-/**
- * RGB color structure for easier color manipulation
- */
-typedef struct {
-    uint8_t r, g, b;
-} RGB;
 
 //=============================================================================
 // BASIC DRAWING FUNCTIONS
